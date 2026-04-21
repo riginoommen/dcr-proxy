@@ -7,13 +7,13 @@ import asyncio
 import sys
 
 from .config import load_config
-from .proxy import McpProxy
+from .gateway import McpGateway
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        prog="mcp-proxy",
-        description="MCP stdio-to-HTTP proxy with OAuth (Auth Code + PKCE)",
+        prog="mcp-gateway",
+        description="Multi-client MCP HTTP gateway with OAuth (Auth Code + PKCE)",
     )
     parser.add_argument(
         "--config",
@@ -21,9 +21,15 @@ def main() -> None:
         help="Path to a JSON configuration file.",
     )
     parser.add_argument(
-        "--mcp-server-url",
-        metavar="URL",
-        help="URL of the HTTP streamable MCP server.",
+        "--host",
+        metavar="ADDR",
+        help="Host address to bind the gateway to (default: 127.0.0.1).",
+    )
+    parser.add_argument(
+        "--port",
+        metavar="PORT",
+        type=int,
+        help="Port for the gateway HTTP server (default: 8080).",
     )
     parser.add_argument(
         "--oauth-issuer",
@@ -47,15 +53,16 @@ def main() -> None:
         help="OAuth scopes to request (space-separated).",
     )
     parser.add_argument(
-        "--redirect-port",
-        metavar="PORT",
+        "--session-ttl",
+        metavar="MINUTES",
         type=int,
-        help="Local port for OAuth callback (0 = auto).",
+        help="Session idle timeout in minutes (default: 480).",
     )
     parser.add_argument(
-        "--token-cache-path",
-        metavar="PATH",
-        help="File path to persist tokens across restarts.",
+        "--allowed-targets",
+        metavar="URL",
+        nargs="+",
+        help="Whitelist of allowed MCP server target URLs (space-separated).",
     )
     parser.add_argument(
         "--log-level",
@@ -67,8 +74,10 @@ def main() -> None:
     args = parser.parse_args()
 
     cli_overrides: dict = {}
-    if args.mcp_server_url:
-        cli_overrides["mcp_server_url"] = args.mcp_server_url
+    if args.host:
+        cli_overrides["host"] = args.host
+    if args.port is not None:
+        cli_overrides["port"] = args.port
     if args.oauth_issuer:
         cli_overrides["oauth_issuer"] = args.oauth_issuer
     if args.client_id:
@@ -77,10 +86,10 @@ def main() -> None:
         cli_overrides["client_secret"] = args.client_secret
     if args.scopes:
         cli_overrides["scopes"] = args.scopes
-    if args.redirect_port is not None:
-        cli_overrides["redirect_port"] = args.redirect_port
-    if args.token_cache_path:
-        cli_overrides["token_cache_path"] = args.token_cache_path
+    if args.session_ttl is not None:
+        cli_overrides["session_ttl_minutes"] = args.session_ttl
+    if args.allowed_targets:
+        cli_overrides["allowed_targets"] = args.allowed_targets
     if args.log_level:
         cli_overrides["log_level"] = args.log_level
 
@@ -90,8 +99,8 @@ def main() -> None:
         print(f"Configuration error: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    proxy = McpProxy(config)
+    gateway = McpGateway(config)
     try:
-        asyncio.run(proxy.run())
+        asyncio.run(gateway.run())
     except KeyboardInterrupt:
         pass

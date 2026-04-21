@@ -1,10 +1,11 @@
 {
-  "mcpServerUrl": "https://your-mcp-server.example.com/mcp",
+  "host": "127.0.0.1",
+  "port": 8080,
   "oauthIssuer": "https://sso.stage.redhat.com/auth/realms/redhat-external",
   "clientId": "your-pre-registered-client-id",
   "clientSecret": null,
   "scopes": ["openid"],
-  "redirectPort": 0,
-  "tokenCachePath": ".tokens.json",
+  "sessionTtlMinutes": 480,
+  "allowedTargets": null,
   "logLevel": "info"
 }

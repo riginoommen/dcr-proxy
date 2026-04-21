@@ -1,10 +1,11 @@
 {
-  "mcpServerUrl": "https://rhg-security-mcp-server-stage.apps.int.spoke.preprod.us-east-1.aws.paas.redhat.com/mcp",
+  "host": "127.0.0.1",
+  "port": 8080,
   "oauthIssuer": "https://sso.stage.redhat.com/auth/realms/redhat-external",
-  "clientId": "a22ac528-3036-4234-8624-2beff6ca9737",
+  "clientId": "a7f3edea-448b-4546-b2d6-2bb32c0e20f6",
   "clientSecret": null,
-  "scopes": ["openid"],
-  "redirectPort": 19200,
-  "tokenCachePath": ".tokens.json",
+  "scopes": ["openid", "api.graphql"],
+  "sessionTtlMinutes": 480,
+  "allowedTargets": null,
   "logLevel": "info"
 }
