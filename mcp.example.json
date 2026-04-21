@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "my-mcp-server": {
+      "command": "python",
+      "args": [
+        "-m",
+        "mcp_proxy",
+        "--config",
+        "/absolute/path/to/config.json"
+      ],
+      "env": {
+        "PYTHONPATH": "/absolute/path/to/dcr-proxy/src"
+      }
+    }
+  }
+}

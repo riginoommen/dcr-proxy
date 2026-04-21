@@ -1,0 +1,10 @@
+{
+  "mcpServerUrl": "https://rhg-security-mcp-server-stage.apps.int.spoke.preprod.us-east-1.aws.paas.redhat.com/mcp",
+  "oauthIssuer": "https://sso.stage.redhat.com/auth/realms/redhat-external",
+  "clientId": "a22ac528-3036-4234-8624-2beff6ca9737",
+  "clientSecret": null,
+  "scopes": ["openid"],
+  "redirectPort": 19200,
+  "tokenCachePath": ".tokens.json",
+  "logLevel": "info"
+}
