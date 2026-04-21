@@ -5,6 +5,7 @@
   "clientId": "your-pre-registered-client-id",
   "clientSecret": null,
   "scopes": ["openid"],
+  "defaultTarget": "https://your-mcp-server.example.com/mcp",
   "sessionTtlMinutes": 480,
   "allowedTargets": null,
   "logLevel": "info"

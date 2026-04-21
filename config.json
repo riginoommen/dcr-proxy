@@ -5,6 +5,7 @@
   "clientId": "a7f3edea-448b-4546-b2d6-2bb32c0e20f6",
   "clientSecret": null,
   "scopes": ["openid", "api.graphql"],
+  "defaultTarget": "https://rhg-security-mcp-server-stage.apps.int.spoke.preprod.us-east-1.aws.paas.redhat.com/mcp",
   "sessionTtlMinutes": 480,
   "allowedTargets": null,
   "logLevel": "info"

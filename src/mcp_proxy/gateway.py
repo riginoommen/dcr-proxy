@@ -1,14 +1,16 @@
-"""HTTP gateway server for the MCP proxy.
+"""MCP DCR Proxy -- HTTP gateway with OAuth authorization server.
 
-Exposes an aiohttp web application that:
-  - Authenticates users via OAuth Auth Code + PKCE (/auth/login, /auth/callback)
-  - Proxies MCP JSON-RPC to dynamically-specified backend servers (POST /mcp)
-  - Passes through SSE streams from backends (GET /mcp)
-  - Provides a health endpoint (GET /health)
+Acts as an MCP-spec-compliant OAuth authorization server with DCR (RFC 7591)
+to MCP clients, while being a standard OAuth client to the real SSO.
+
+MCP clients (Cursor, Claude Desktop, MCP Inspector) connect to /mcp with
+Bearer tokens. The gateway proxies requests to backend MCP servers using
+real SSO tokens.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import sys
@@ -16,16 +18,17 @@ from typing import Optional
 
 from aiohttp import web
 
+from .client_registry import ClientRegistry
 from .config import GatewayConfig
+from .oauth_server import register_oauth_routes
 from .session import SessionManager
+from .token_store import TokenStore
 
 logger = logging.getLogger(__name__)
 
-SESSION_COOKIE = "mcp_session"
-
 
 class McpGateway:
-    """Multi-client MCP HTTP gateway with per-user OAuth sessions."""
+    """MCP DCR proxy gateway with per-user OAuth sessions."""
 
     def __init__(self, config: GatewayConfig) -> None:
         self._config = config
@@ -36,15 +39,20 @@ class McpGateway:
             client_secret=config.client_secret,
             session_ttl_minutes=config.session_ttl_minutes,
         )
+        self._client_registry = ClientRegistry()
+        self._token_store = TokenStore()
 
     async def run(self) -> None:
         _setup_logging(self._config.log_level)
-        logger.info("Starting MCP HTTP gateway...")
-        logger.info("  Listen:       %s:%d", self._config.host, self._config.port)
+        logger.info("Starting MCP DCR Proxy...")
+        logger.info("  Listen:        %s:%d", self._config.host, self._config.port)
         logger.info("  OAuth issuer:  %s", self._config.oauth_issuer)
-        logger.info("  Client ID:    %s", self._config.client_id)
+        logger.info("  Client ID:     %s", self._config.client_id)
+        if self._config.default_target:
+            logger.info("  Default target: %s", self._config.default_target)
 
         await self._session_mgr.start()
+        self._token_store.start_cleanup()
 
         app = self._build_app()
         runner = web.AppRunner(app)
@@ -53,103 +61,55 @@ class McpGateway:
         await site.start()
 
         url = f"http://{self._config.host}:{self._config.port}"
-        logger.info("Gateway listening on %s", url)
-        print(f"MCP Gateway running on {url}", file=sys.stderr)
-        print(f"  Login:  {url}/auth/login", file=sys.stderr)
-        print(f"  Health: {url}/health", file=sys.stderr)
-        print(f"  MCP:    POST {url}/mcp?target=<mcp-server-url>", file=sys.stderr)
+        logger.info("DCR Proxy listening on %s", url)
+        print(f"MCP DCR Proxy running on {url}", file=sys.stderr)
+        print(f"  MCP endpoint:  {url}/mcp", file=sys.stderr)
+        print(f"  DCR register:  POST {url}/oauth/register", file=sys.stderr)
+        print(f"  OAuth metadata: {url}/.well-known/oauth-authorization-server", file=sys.stderr)
+        print(f"  Health:        {url}/health", file=sys.stderr)
 
         try:
             while True:
-                import asyncio
                 await asyncio.sleep(3600)
         except (asyncio.CancelledError, KeyboardInterrupt):
             pass
         finally:
+            await self._token_store.stop()
             await self._session_mgr.close()
             await runner.cleanup()
             logger.info("Gateway shut down")
 
     def _build_app(self) -> web.Application:
         app = web.Application()
-        app.router.add_get("/auth/login", self._handle_login)
-        app.router.add_get("/auth/callback", self._handle_callback)
+
+        gateway_issuer = f"http://{self._config.host}:{self._config.port}"
+        register_oauth_routes(
+            app,
+            session_mgr=self._session_mgr,
+            client_registry=self._client_registry,
+            token_store=self._token_store,
+            gateway_issuer=gateway_issuer,
+            scopes=self._config.scopes,
+        )
+
         app.router.add_post("/mcp", self._handle_mcp_post)
         app.router.add_get("/mcp", self._handle_mcp_get)
         app.router.add_get("/health", self._handle_health)
         return app
 
     # ------------------------------------------------------------------
-    # Auth routes
-    # ------------------------------------------------------------------
-
-    async def _handle_login(self, request: web.Request) -> web.Response:
-        callback_url = self._callback_url(request)
-        session_id, auth_url = self._session_mgr.create_login_session(callback_url)
-
-        resp = web.HTTPFound(auth_url)
-        resp.set_cookie(SESSION_COOKIE, session_id, httponly=True, samesite="Lax")
-        return resp
-
-    async def _handle_callback(self, request: web.Request) -> web.Response:
-        code = request.query.get("code")
-        state = request.query.get("state")
-        error = request.query.get("error")
-
-        if error:
-            desc = request.query.get("error_description", error)
-            return web.Response(
-                text=f"Authentication failed: {desc}",
-                status=400,
-                content_type="text/plain",
-            )
-
-        if not code or not state:
-            return web.Response(
-                text="Missing code or state parameter",
-                status=400,
-                content_type="text/plain",
-            )
-
-        session_id = request.cookies.get(SESSION_COOKIE)
-        if not session_id:
-            return web.Response(
-                text="No session cookie. Please start login again at /auth/login",
-                status=400,
-                content_type="text/plain",
-            )
-
-        ok = await self._session_mgr.complete_auth(session_id, code, state)
-        if not ok:
-            return web.Response(
-                text="Authentication failed: invalid session or state mismatch. "
-                     "Please try /auth/login again.",
-                status=400,
-                content_type="text/plain",
-            )
-
-        return web.Response(
-            text="Authentication successful! You can close this tab and use the MCP gateway.",
-            content_type="text/plain",
-        )
-
-    # ------------------------------------------------------------------
-    # MCP proxy routes
+    # MCP proxy routes (Bearer token auth)
     # ------------------------------------------------------------------
 
     async def _handle_mcp_post(self, request: web.Request) -> web.Response:
-        session_id = request.cookies.get(SESSION_COOKIE)
-        if not session_id or not self._session_mgr.is_authenticated(session_id):
-            login_url = f"{self._base_url(request)}/auth/login"
-            return web.json_response(
-                {"error": "unauthorized", "loginUrl": login_url},
-                status=401,
-            )
+        session_id = self._extract_session(request)
+        if session_id is None:
+            return self._unauthorized_response(request)
 
-        target = request.query.get("target")
-        if not target:
+        target = self._resolve_target(request)
+        if target is None:
             return web.json_response(
-                {"error": "missing 'target' query parameter"},
+                {"error": "missing 'target' query parameter and no defaultTarget configured"},
                 status=400,
             )
 
@@ -162,20 +122,12 @@ class McpGateway:
         try:
             body = await request.json()
         except Exception:
-            return web.json_response(
-                {"error": "invalid JSON body"},
-                status=400,
-            )
+            return web.json_response({"error": "invalid JSON body"}, status=400)
 
         try:
-            token = await self._session_mgr.get_token(session_id)
-        except RuntimeError:
-            login_url = f"{self._base_url(request)}/auth/login"
-            return web.json_response(
-                {"error": "session expired, please re-authenticate",
-                 "loginUrl": login_url},
-                status=401,
-            )
+            await self._session_mgr.get_token(session_id)
+        except (KeyError, RuntimeError):
+            return self._unauthorized_response(request)
 
         async def _get_token() -> str:
             return await self._session_mgr.get_token(session_id)
@@ -197,15 +149,12 @@ class McpGateway:
             )
 
     async def _handle_mcp_get(self, request: web.Request) -> web.StreamResponse:
-        """SSE passthrough for server-initiated messages."""
-        session_id = request.cookies.get(SESSION_COOKIE)
-        if not session_id or not self._session_mgr.is_authenticated(session_id):
-            return web.json_response(
-                {"error": "unauthorized"}, status=401
-            )
+        session_id = self._extract_session(request)
+        if session_id is None:
+            return self._unauthorized_response(request)
 
-        target = request.query.get("target")
-        if not target:
+        target = self._resolve_target(request)
+        if target is None:
             return web.json_response(
                 {"error": "missing 'target' query parameter"}, status=400
             )
@@ -223,7 +172,7 @@ class McpGateway:
                 session_id, target, _get_token
             )
         except (KeyError, RuntimeError):
-            return web.json_response({"error": "session expired"}, status=401)
+            return self._unauthorized_response(request)
 
         stream = await client.initialize_sse_stream()
         if stream is None:
@@ -238,9 +187,8 @@ class McpGateway:
         )
         await resp.prepare(request)
 
-        import json as _json
         async for msg in stream:
-            data = _json.dumps(msg, separators=(",", ":"))
+            data = json.dumps(msg, separators=(",", ":"))
             await resp.write(f"data: {data}\n\n".encode("utf-8"))
 
         return resp
@@ -256,10 +204,33 @@ class McpGateway:
     # Helpers
     # ------------------------------------------------------------------
 
-    def _callback_url(self, request: web.Request) -> str:
-        scheme = request.headers.get("X-Forwarded-Proto", request.scheme)
-        host = request.headers.get("X-Forwarded-Host", request.host)
-        return f"{scheme}://{host}/auth/callback"
+    def _extract_session(self, request: web.Request) -> Optional[str]:
+        """Extract session_id from Bearer token."""
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            gateway_token = auth_header[7:]
+            return self._token_store.get_session_id(gateway_token)
+        return None
+
+    def _unauthorized_response(self, request: web.Request) -> web.Response:
+        base = self._base_url(request)
+        resource_metadata_url = f"{base}/.well-known/oauth-protected-resource"
+        return web.Response(
+            status=401,
+            headers={
+                "WWW-Authenticate": (
+                    f'Bearer resource_metadata="{resource_metadata_url}"'
+                ),
+            },
+            content_type="application/json",
+            text=json.dumps({"error": "unauthorized"}),
+        )
+
+    def _resolve_target(self, request: web.Request) -> Optional[str]:
+        target = request.query.get("target")
+        if target:
+            return target
+        return self._config.default_target
 
     def _base_url(self, request: web.Request) -> str:
         scheme = request.headers.get("X-Forwarded-Proto", request.scheme)

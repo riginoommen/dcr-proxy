@@ -1,33 +1,83 @@
-# MCP HTTP Gateway with OAuth
+# MCP DCR Proxy
 
-A multi-client HTTP gateway for the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/), with per-user OAuth Authorization Code + PKCE authentication against Red Hat SSO (Keycloak).
-
-Multiple clients authenticate independently and can target **any** backend MCP server dynamically via a query parameter.
+An OAuth gateway with **Dynamic Client Registration (RFC 7591)** for the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/). Enables any MCP client to connect to your MCP servers through Red Hat SSO authentication -- no DCR support needed on the SSO side.
 
 ```
-┌──────────┐                          ┌────────────────┐
-│ Client A │──┐                  ┌──► │ MCP Server 1   │
-└──────────┘  │  POST /mcp       │    └────────────────┘
-              ├─ ?target=... ──► │
-┌──────────┐  │                  │    ┌────────────────┐
-│ Client B │──┘  ┌───────────┐  └──► │ MCP Server 2   │
-└──────────┘     │  Gateway  │        └────────────────┘
-                 │  :8080    │
-                 └─────┬─────┘
-                       │
-              OAuth PKCE per user
-                       │
-                 ┌─────▼──────┐
-                 │  Red Hat   │
-                 │  SSO       │
-                 └────────────┘
+┌──────────┐                    ┌────────────┐                    ┌────────────┐
+│  Cursor  │                    │            │                    │            │
+│  Claude  │── MCP + Bearer ──► │ DCR Proxy  │── Bearer (SSO) ──►│ MCP Server │
+│Inspector │   (gateway token)  │   :8080    │   (real token)    │   (HTTP)   │
+└──────────┘                    └─────┬──────┘                    └────────────┘
+     │                                │
+     │  DCR + OAuth PKCE              │  OAuth PKCE
+     │  (auto-discovered)             │  (pre-registered client)
+     │                                │
+     │                          ┌─────▼──────┐
+     └─── browser SSO login ──►│  Red Hat   │
+                                │  SSO       │
+                                └────────────┘
 ```
+
+## How It Works
+
+1. MCP client connects to `http://proxy:8080/mcp`
+2. Proxy returns `401` with `WWW-Authenticate` header pointing to OAuth metadata
+3. Client auto-discovers `/.well-known/oauth-authorization-server`
+4. Client registers via **DCR** at `POST /oauth/register` (gets a `client_id`)
+5. Client starts **Authorization Code + PKCE** flow at `/oauth/authorize`
+6. Proxy redirects user's browser to **Red Hat SSO** for login
+7. After SSO login, proxy issues a **gateway access token** to the client
+8. Client uses the gateway token for all MCP requests (`Authorization: Bearer <token>`)
+9. Proxy forwards requests to the backend MCP server using the **real SSO token**
+
+## Client Setup
+
+### Cursor
+
+```json
+{
+  "mcpServers": {
+    "security-mcp": {
+      "url": "http://127.0.0.1:8080/mcp"
+    }
+  }
+}
+```
+
+### Claude Desktop
+
+```json
+{
+  "mcpServers": {
+    "security-mcp": {
+      "url": "http://127.0.0.1:8080/mcp"
+    }
+  }
+}
+```
+
+### MCP Inspector
+
+1. Run: `npx @modelcontextprotocol/inspector`
+2. Select **Streamable HTTP** transport
+3. Enter URL: `http://127.0.0.1:8080/mcp`
+4. Click **Connect**
+
+### Targeting a Different MCP Server
+
+Pass `?target=` to reach any backend:
+
+```
+http://127.0.0.1:8080/mcp?target=https://other-mcp-server.example.com/mcp
+```
+
+Without `?target=`, the proxy uses the `defaultTarget` from config.
 
 ## Prerequisites
 
 - **Python 3.10+**
-- **A pre-registered OAuth client** in your Keycloak / Red Hat SSO realm (see [Keycloak Client Setup](#keycloak-client-setup))
-- **One or more HTTP streamable MCP servers** that accept Bearer token authentication
+- **A pre-registered OAuth client** in Red Hat SSO (see [Keycloak Client Setup](#keycloak-client-setup))
+- **One or more HTTP MCP servers** that accept Bearer token authentication
 
 ## Installation
 
@@ -46,25 +96,18 @@ Your SSO team needs to create a client with these settings:
 | ------------------------------ | ---------------------------------------------- |
 | **Client Protocol**            | `openid-connect`                               |
 | **Client ID**                  | e.g. `mcp-gateway-client`                      |
-| **Access Type**                | `public` (recommended with PKCE) or `confidential` |
-| **Standard Flow Enabled**      | `ON` (Authorization Code)                      |
+| **Access Type**                | `public` (recommended with PKCE)               |
+| **Standard Flow Enabled**      | `ON`                                           |
 | **Direct Access Grants**       | `OFF`                                          |
-| **Valid Redirect URIs**        | `http://127.0.0.1:8080/auth/callback`          |
+| **Valid Redirect URIs**        | `http://127.0.0.1:8080/oauth/callback`         |
 | **Web Origins**                | `http://127.0.0.1:8080`                        |
 | **PKCE Code Challenge Method** | `S256`                                         |
-| **Scopes**                     | `openid` (plus any your MCP servers require)   |
-
-Note: the redirect URI is now a **fixed path** (`/auth/callback`) on your gateway's host and port -- no more ephemeral ports.
 
 ## Configuration
 
-The gateway loads configuration with priority: **CLI flags > environment variables > config file**.
-
-### Config File
-
 ```bash
 cp config.example.json config.json
-# Edit config.json with your values
+# Edit with your values
 ```
 
 ```json
@@ -73,49 +116,26 @@ cp config.example.json config.json
   "port": 8080,
   "oauthIssuer": "https://sso.stage.redhat.com/auth/realms/redhat-external",
   "clientId": "your-client-id",
-  "clientSecret": null,
   "scopes": ["openid"],
+  "defaultTarget": "https://your-mcp-server.example.com/mcp",
   "sessionTtlMinutes": 480,
   "allowedTargets": null,
   "logLevel": "info"
 }
 ```
 
-### Environment Variables
-
-```bash
-export HOST=127.0.0.1
-export PORT=8080
-export OAUTH_ISSUER=https://sso.stage.redhat.com/auth/realms/redhat-external
-export CLIENT_ID=your-client-id
-export SCOPES=openid
-export SESSION_TTL_MINUTES=480
-export LOG_LEVEL=info
-```
-
-### CLI Flags
-
-```bash
-python -m mcp_proxy \
-  --host 127.0.0.1 \
-  --port 8080 \
-  --client-id your-client-id \
-  --log-level info
-```
-
-### All Configuration Options
-
-| Config Key          | Env Var              | CLI Flag            | Default | Description |
-| ------------------- | -------------------- | ------------------- | ------- | ----------- |
+| Config Key          | Env Var              | CLI Flag            | Default   | Description |
+| ------------------- | -------------------- | ------------------- | --------- | ----------- |
 | `host`              | `HOST`               | `--host`            | `127.0.0.1` | Bind address |
-| `port`              | `PORT`               | `--port`            | `8080` | Listen port |
-| `oauthIssuer`       | `OAUTH_ISSUER`       | `--oauth-issuer`    | `https://sso.stage.redhat.com/auth/realms/redhat-external` | OIDC issuer |
-| `clientId`          | `CLIENT_ID`          | `--client-id`       | *required* | OAuth client ID |
-| `clientSecret`      | `CLIENT_SECRET`      | `--client-secret`   | `null` | Client secret (omit for PKCE) |
+| `port`              | `PORT`               | `--port`            | `8080`    | Listen port |
+| `oauthIssuer`       | `OAUTH_ISSUER`       | `--oauth-issuer`    | RH SSO staging | OIDC issuer |
+| `clientId`          | `CLIENT_ID`          | `--client-id`       | *required* | SSO client ID |
+| `clientSecret`      | `CLIENT_SECRET`      | `--client-secret`   | `null`    | SSO client secret |
 | `scopes`            | `SCOPES`             | `--scopes`          | `["openid"]` | OAuth scopes |
-| `sessionTtlMinutes` | `SESSION_TTL_MINUTES`| `--session-ttl`     | `480` | Session idle timeout (minutes) |
-| `allowedTargets`    | `ALLOWED_TARGETS`    | `--allowed-targets` | `null` | Whitelist of MCP server URLs |
-| `logLevel`          | `LOG_LEVEL`          | `--log-level`       | `info` | Logging level |
+| `defaultTarget`     | `DEFAULT_TARGET`     | `--default-target`  | `null`    | Default MCP server URL |
+| `sessionTtlMinutes` | `SESSION_TTL_MINUTES`| `--session-ttl`     | `480`     | Session idle timeout |
+| `allowedTargets`    | `ALLOWED_TARGETS`    | `--allowed-targets` | `null`    | Target whitelist |
+| `logLevel`          | `LOG_LEVEL`          | `--log-level`       | `info`    | Logging level |
 
 ## Running
 
@@ -125,74 +145,46 @@ PYTHONPATH=src python -m mcp_proxy --config config.json
 ```
 
 Output:
-
 ```
-MCP Gateway running on http://127.0.0.1:8080
-  Login:  http://127.0.0.1:8080/auth/login
-  Health: http://127.0.0.1:8080/health
-  MCP:    POST http://127.0.0.1:8080/mcp?target=<mcp-server-url>
+MCP DCR Proxy running on http://127.0.0.1:8080
+  MCP endpoint:  http://127.0.0.1:8080/mcp
+  DCR register:  POST http://127.0.0.1:8080/oauth/register
+  OAuth metadata: http://127.0.0.1:8080/.well-known/oauth-authorization-server
+  Health:        http://127.0.0.1:8080/health
 ```
-
-## Usage
-
-### Step 1: Authenticate
-
-Open your browser and visit:
-
-```
-http://127.0.0.1:8080/auth/login
-```
-
-This redirects you to Red Hat SSO for login. After authenticating, you get a session cookie (`mcp_session`) and see "Authentication successful!".
-
-### Step 2: Make MCP Requests
-
-Send JSON-RPC to any backend MCP server through the gateway:
-
-```bash
-curl -b cookies.txt -c cookies.txt \
-  'http://127.0.0.1:8080/mcp?target=https://mcp-server-1.example.com/mcp' \
-  -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
-```
-
-The `target` query parameter specifies which MCP server to forward to. The gateway attaches your OAuth Bearer token automatically.
-
-### Step 3: Hit a Different MCP Server (Same Session)
-
-```bash
-curl -b cookies.txt \
-  'http://127.0.0.1:8080/mcp?target=https://mcp-server-2.example.com/mcp' \
-  -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
-```
-
-One login, any number of backend MCP servers.
-
-### SSE Stream (Server-Initiated Messages)
-
-```bash
-curl -b cookies.txt -N \
-  'http://127.0.0.1:8080/mcp?target=https://mcp-server.example.com/mcp'
-```
-
-GET requests are passed through as SSE streams.
 
 ## API Reference
 
-| Endpoint          | Method | Auth Required | Description |
-| ----------------- | ------ | ------------- | ----------- |
-| `/auth/login`     | GET    | No            | Initiates SSO login, redirects to Keycloak |
-| `/auth/callback`  | GET    | Cookie        | OAuth callback from SSO, sets session |
-| `/mcp?target=URL` | POST   | Cookie        | Forward JSON-RPC to target MCP server |
-| `/mcp?target=URL` | GET    | Cookie        | SSE stream passthrough from target |
-| `/health`         | GET    | No            | Returns `{"status": "ok"}` |
+### Discovery Endpoints
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/.well-known/oauth-protected-resource` | GET | RFC 9728 -- resource metadata with authorization server URL |
+| `/.well-known/oauth-authorization-server` | GET | RFC 8414 -- OAuth metadata with all endpoints |
+
+### OAuth Endpoints
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/oauth/register` | POST | DCR (RFC 7591) -- register a new client |
+| `/oauth/authorize` | GET | Start Authorization Code + PKCE flow |
+| `/oauth/callback` | GET | Internal SSO callback |
+| `/oauth/token` | POST | Exchange auth code for access token |
+
+### MCP Endpoints
+
+| Endpoint | Method | Auth | Description |
+|---|---|---|---|
+| `/mcp` | POST | Bearer | Forward JSON-RPC to target MCP server |
+| `/mcp` | GET | Bearer | SSE stream passthrough |
+| `/mcp?target=URL` | POST/GET | Bearer | Target a specific MCP server |
+| `/health` | GET | None | Health check |
 
 ## Security
 
 ### Target Whitelist
 
-By default, clients can target any URL. To restrict which MCP servers are reachable, set `allowedTargets`:
+Restrict reachable backends:
 
 ```json
 {
@@ -203,29 +195,23 @@ By default, clients can target any URL. To restrict which MCP servers are reacha
 }
 ```
 
-Requests to unlisted targets will get a `403 Forbidden`.
+### Token Isolation
 
-### Session Isolation
-
-Each client gets an independent OAuth session. Client A cannot use Client B's tokens. Sessions are automatically pruned after the configured idle timeout.
+Each MCP client gets its own DCR registration, its own OAuth session, and its own gateway token. Gateway tokens map to SSO tokens internally -- clients never see the real SSO tokens.
 
 ## Troubleshooting
 
-### "unauthorized" response on /mcp
+### MCP client gets 401
 
-You need to authenticate first. Visit `http://127.0.0.1:8080/auth/login` in your browser.
+The client needs to go through the OAuth flow first. Most MCP clients handle this automatically via the `WWW-Authenticate` header and OAuth metadata discovery.
 
-### Session expired
+### "redirect_uri not registered"
 
-If your session was idle longer than `sessionTtlMinutes` (default 8 hours) or the SSO refresh token expired, re-authenticate via `/auth/login`.
+The MCP client's redirect_uri must match one of the URIs it registered via DCR. Check your client's DCR registration.
 
-### "target not in allowed list"
+### SSO redirect URI mismatch
 
-The `allowedTargets` whitelist is blocking the URL. Either add the target URL to the whitelist or set `allowedTargets` to `null` to allow any target.
-
-### Keycloak redirect URI mismatch
-
-Make sure your Keycloak client's Valid Redirect URIs includes `http://127.0.0.1:8080/auth/callback` (matching your gateway's host and port exactly).
+Your Keycloak client needs `http://127.0.0.1:8080/oauth/callback` as a valid redirect URI.
 
 ### Debugging
 
@@ -233,23 +219,24 @@ Make sure your Keycloak client's Valid Redirect URIs includes `http://127.0.0.1:
 PYTHONPATH=src python -m mcp_proxy --config config.json --log-level debug
 ```
 
-All logs go to **stderr**.
-
 ## Project Structure
 
 ```
 dcr-proxy/
   src/mcp_proxy/
-    __init__.py          # Package metadata
-    __main__.py          # python -m entry point
-    cli.py               # Argument parsing, config loading, main()
-    config.py            # Pydantic GatewayConfig model
-    oauth.py             # OAuth Auth Code + PKCE flow manager
-    session.py           # Per-user session manager
-    gateway.py           # HTTP gateway server (aiohttp)
-    http_client.py       # HTTP MCP client with Bearer auth & SSE
-  config.example.json    # Example configuration
-  requirements.txt       # Python dependencies
+    __init__.py
+    __main__.py
+    cli.py                # CLI entry point
+    config.py             # GatewayConfig model
+    oauth.py              # SSO-facing OAuth (PKCE, token exchange)
+    oauth_server.py       # Client-facing OAuth server (DCR, authorize, token)
+    client_registry.py    # DCR client store (RFC 7591)
+    token_store.py        # Gateway token <-> SSO session mapping
+    session.py            # Per-user session manager
+    gateway.py            # HTTP gateway server
+    http_client.py        # MCP HTTP client with Bearer auth
+  config.example.json
+  requirements.txt
   .gitignore
   README.md
 ```

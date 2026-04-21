@@ -40,6 +40,10 @@ class GatewayConfig(BaseModel):
         default=480,
         description="Session idle timeout in minutes before automatic cleanup.",
     )
+    default_target: Optional[str] = Field(
+        default=None,
+        description="Default MCP server URL when no ?target= param is provided.",
+    )
     allowed_targets: Optional[list[str]] = Field(
         default=None,
         description="Whitelist of allowed MCP server target URLs. null = allow any.",
@@ -90,6 +94,7 @@ def load_config(
         "CLIENT_SECRET": "client_secret",
         "SCOPES": "scopes",
         "SESSION_TTL_MINUTES": "session_ttl_minutes",
+        "DEFAULT_TARGET": "default_target",
         "ALLOWED_TARGETS": "allowed_targets",
         "LOG_LEVEL": "log_level",
     }
@@ -123,6 +128,7 @@ def _normalize_keys(data: dict) -> dict:
         "clientSecret": "client_secret",
         "scopes": "scopes",
         "sessionTtlMinutes": "session_ttl_minutes",
+        "defaultTarget": "default_target",
         "allowedTargets": "allowed_targets",
         "logLevel": "log_level",
     }

@@ -13,7 +13,7 @@ from .gateway import McpGateway
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="mcp-gateway",
-        description="Multi-client MCP HTTP gateway with OAuth (Auth Code + PKCE)",
+        description="MCP DCR Proxy -- OAuth gateway with Dynamic Client Registration",
     )
     parser.add_argument(
         "--config",
@@ -53,6 +53,11 @@ def main() -> None:
         help="OAuth scopes to request (space-separated).",
     )
     parser.add_argument(
+        "--default-target",
+        metavar="URL",
+        help="Default MCP server URL when no ?target= param is provided.",
+    )
+    parser.add_argument(
         "--session-ttl",
         metavar="MINUTES",
         type=int,
@@ -86,6 +91,8 @@ def main() -> None:
         cli_overrides["client_secret"] = args.client_secret
     if args.scopes:
         cli_overrides["scopes"] = args.scopes
+    if args.default_target:
+        cli_overrides["default_target"] = args.default_target
     if args.session_ttl is not None:
         cli_overrides["session_ttl_minutes"] = args.session_ttl
     if args.allowed_targets:
