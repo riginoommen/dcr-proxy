@@ -176,7 +176,7 @@
 
    END OF TERMS AND CONDITIONS
 
-   Copyright 2026 Roommen
+   Copyright 2026 Rigin Oommen
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
