@@ -4,7 +4,7 @@ An OAuth gateway that adds **Dynamic Client Registration (RFC 7591)** support to
 
 ## The Problem
 
-MCP clients (such as Cursor, Claude Desktop, and MCP Inspector) rely on OAuth with Dynamic Client Registration (DCR) for authentication. However, some enterprise SSO providers either lack native DCR support or require it to be explicitly enabled and configured. As a result, MCP clients cannot directly connect to certain SSO-protected MCP servers..
+MCP clients (such as Cursor, Claude Desktop, and MCP Inspector) rely on OAuth with Dynamic Client Registration (DCR) for authentication. However, some enterprise SSO providers either lack native DCR support or require it to be explicitly enabled and configured. As a result, MCP clients cannot directly connect to certain SSO-protected MCP servers.
 
 **MCP DCR Proxy** sits between the client and SSO:
 
