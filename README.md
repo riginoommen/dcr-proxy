@@ -2,37 +2,11 @@
 
 An OAuth gateway with **Dynamic Client Registration (RFC 7591)** for the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/). Enables any MCP client to connect to your MCP servers through Red Hat SSO authentication -- no DCR support needed on the SSO side.
 
-```
-                    MCP Clients                          DCR Proxy                        Backend
-              ┌─────────────────────┐          ┌──────────────────────┐          ┌─────────────────────┐
-              │                     │          │                      │          │                     │
-              │   Cursor            │  Bearer  │   ┌──────────────┐  │  Bearer  │   MCP Server 1      │
-              │   Claude Desktop    │─────────►│   │ OAuth Server │  │─────────►│   (HTTP Streamable)  │
-              │   MCP Inspector     │  (gate-  │   │  ┌─ DCR      │  │  (real   │                     │
-              │   Any MCP Client    │  way     │   │  ├─ Authorize │  │  SSO     ├─────────────────────┤
-              │                     │  token)  │   │  ├─ Token     │  │  token)  │   MCP Server 2      │
-              └──────────┬──────────┘          │   │  └─ Refresh   │  │          │   (?target=url)     │
-                         │                     │   └──────┬───────┘  │          │                     │
-                         │                     │          │          │          └─────────────────────┘
-                         │  Browser            │   ┌──────▼───────┐  │
-                         │  SSO Login          │   │ Token Store  │  │
-                         │                     │   │  gateway ←→  │  │
-                         ▼                     │   │  SSO tokens  │  │
-              ┌─────────────────────┐          │   └──────────────┘  │
-              │                     │          │                      │
-              │   Red Hat SSO       │◄─────────┤   OAuth PKCE         │
-              │   (Keycloak)        │─────────►│   (pre-registered)   │
-              │                     │          │                      │
-              └─────────────────────┘          └──────────────────────┘
 
-              ─────── Data Flow ───────
 
-              1. Client hits /mcp → 401 + WWW-Authenticate
-              2. Client discovers OAuth metadata + registers via DCR
-              3. Browser opens → SSO login → gateway issues token
-              4. Client sends MCP requests with gateway Bearer token
-              5. Proxy forwards to backend with real SSO Bearer token
-```
+## Architecture
+
+![Proxy Architecture](docs/assets/Proxy_Architecture.png)
 
 ## Quick Start
 
@@ -53,6 +27,8 @@ PYTHONPATH=src python -m mcp_proxy --config config.json
 ```
 
 ## How It Works
+
+![Workflow Diagram](docs/assets/Workflow_Diagram.jpg)
 
 1. MCP client connects to `http://proxy:8080/mcp`
 2. Proxy returns `401` with `WWW-Authenticate` header pointing to OAuth metadata
@@ -483,6 +459,35 @@ dcr-proxy/
   README.md
 ```
 
+## Developer Credits
+
+Built by **[Rigin Oommen](https://github.com/riginoommen)** with assistance from **Cursor AI (Claude)**.
+
+Contact: [riginoommen@gmail.com](mailto:riginoommen@gmail.com)
+
+## Contributing
+
+Contributions are welcome! If you'd like to help improve MCP DCR Proxy, here's how you can get involved:
+
+1. **Fork** the repository
+2. **Create** a feature branch (`git checkout -b feature/my-feature`)
+3. **Commit** your changes (`git commit -m "Add my feature"`)
+4. **Push** to your branch (`git push origin feature/my-feature`)
+5. **Open** a Pull Request
+
+### Ways to Contribute
+
+- Report bugs or suggest features via [GitHub Issues](https://github.com/riginoommen/dcr-proxy/issues)
+- Improve documentation
+- Add support for additional SSO providers
+- Write tests
+- Review open Pull Requests
+
+For questions or discussions, reach out at [riginoommen@gmail.com](mailto:riginoommen@gmail.com).
+
 ## License
 
-MIT
+Copyright 2026
+Rigin Oommen
+
+Licensed under the [Apache License, Version 2.0](LICENSE.md). You may not use this project except in compliance with the License. See the [LICENSE.md](LICENSE.md) file for details.
