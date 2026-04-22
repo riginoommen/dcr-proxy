@@ -108,7 +108,7 @@ class _OAuthContext:
             "registration_endpoint": f"{base}/oauth/register",
             "scopes_supported": self._scopes,
             "response_types_supported": ["code"],
-            "grant_types_supported": ["authorization_code"],
+            "grant_types_supported": ["authorization_code", "refresh_token"],
             "token_endpoint_auth_methods_supported": [
                 "client_secret_post",
                 "none",
@@ -270,7 +270,7 @@ class _OAuthContext:
     # ------------------------------------------------------------------
 
     async def handle_token(self, request: web.Request) -> web.Response:
-        """Exchange a gateway auth code for a gateway access token."""
+        """Exchange a gateway auth code or refresh token for tokens."""
         try:
             body = await request.post()
         except Exception:
@@ -280,12 +280,19 @@ class _OAuthContext:
             )
 
         grant_type = body.get("grant_type")
-        if grant_type != "authorization_code":
+
+        if grant_type == "authorization_code":
+            return await self._handle_authorization_code_grant(body)
+        elif grant_type == "refresh_token":
+            return await self._handle_refresh_token_grant(body)
+        else:
             return web.json_response(
-                {"error": "unsupported_grant_type"},
+                {"error": "unsupported_grant_type",
+                 "error_description": "Supported: authorization_code, refresh_token"},
                 status=400,
             )
 
+    async def _handle_authorization_code_grant(self, body) -> web.Response:
         code = body.get("code")
         code_verifier = body.get("code_verifier")
         client_id = body.get("client_id")
@@ -311,9 +318,38 @@ class _OAuthContext:
                 status=400,
             )
 
-        logger.info("Issued gateway access token for client %s", client_id[:8])
+        logger.info("Issued gateway tokens for client %s", client_id[:8])
+        return self._token_response(token_entry)
+
+    async def _handle_refresh_token_grant(self, body) -> web.Response:
+        refresh_token = body.get("refresh_token")
+        client_id = body.get("client_id")
+
+        if not refresh_token or not client_id:
+            return web.json_response(
+                {"error": "invalid_request",
+                 "error_description": "refresh_token and client_id are required"},
+                status=400,
+            )
+
+        try:
+            token_entry = self._tokens.refresh(
+                refresh_token=refresh_token,
+                client_id=client_id,
+            )
+        except ValueError as exc:
+            return web.json_response(
+                {"error": "invalid_grant", "error_description": str(exc)},
+                status=400,
+            )
+
+        logger.info("Refreshed gateway tokens for client %s", client_id[:8])
+        return self._token_response(token_entry)
+
+    def _token_response(self, token_entry) -> web.Response:
         return web.json_response({
             "access_token": token_entry.gateway_token,
+            "refresh_token": token_entry.refresh_token,
             "token_type": "Bearer",
             "expires_in": token_entry.expires_in,
         })

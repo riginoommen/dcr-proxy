@@ -22,7 +22,7 @@ class GatewayConfig(BaseModel):
         description="Port for the gateway HTTP server.",
     )
     oauth_issuer: str = Field(
-        default="https://sso.stage.redhat.com/auth/realms/redhat-external",
+        default="https://sso.redhat.com/auth/realms/redhat-external",
         description="OAuth/OIDC issuer URL. Used for .well-known discovery.",
     )
     client_id: str = Field(

@@ -1,7 +1,7 @@
 {
   "host": "127.0.0.1",
   "port": 8080,
-  "oauthIssuer": "https://sso.stage.redhat.com/auth/realms/redhat-external",
+  "oauthIssuer": "https://sso.redhat.com/auth/realms/redhat-external",
   "clientId": "your-pre-registered-client-id",
   "clientSecret": null,
   "scopes": ["openid"],
