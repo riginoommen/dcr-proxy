@@ -47,7 +47,7 @@ The proxy maintains two separate token layers. MCP clients never see the real SS
 | Layer | Held by | Issued by | Used for |
 |---|---|---|---|
 | **Gateway token** | MCP client (Cursor, etc.) | DCR Proxy | Authenticating to the proxy |
-| **SSO token** | DCR Proxy (internal) | sso.stage.redhat.com | Authenticating to backend MCP servers |
+| **SSO token** | DCR Proxy (internal) | sso.redhat.com | Authenticating to backend MCP servers |
 
 ## Client Setup
 
@@ -147,7 +147,7 @@ cp config.example.json config.json
 {
   "host": "127.0.0.1",
   "port": 8080,
-  "oauthIssuer": "https://sso.stage.redhat.com/auth/realms/redhat-external",
+  "oauthIssuer": "https://sso.redhat.com/auth/realms/redhat-external",
   "clientId": "your-client-id",
   "clientSecret": null,
   "scopes": ["openid"],
